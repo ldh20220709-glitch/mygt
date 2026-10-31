@@ -7,13 +7,12 @@
 !images.html
 !order.json
 !*-吉他动态谱.html
-
 # 器数分离（2026-10-30）：纯播放器 + 曲目清单 + 每首一份数据；旧文件名留作跳转页
 !play.html
 !catalog.json
 !songs/
 !songs/**
-
 # macOS 系统文件
 .DS_Store
 **/.DS_Store
+我的人声*.m4a

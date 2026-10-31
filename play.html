@@ -1151,7 +1151,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API;
       for(var vk in pack){
         var dv=pack[vk];
         if(dv && dv.score){
-          try{ var vr=window.VecRender.toSong(dv); vr.song.score=dv.score; pack[vk]=vr.song; for(var ik in vr.imgs) IMG[ik]=vr.imgs[ik]; }   /* score 留在 song 上：试听按它发声 */
+          try{ var vr=window.VecRender.toSong(dv); vr.song.score=dv.score; vr.song.vox=(dv.vox&&dv.files&&dv.files.vox)?Object.assign({f:dv.files.vox},dv.vox):null; pack[vk]=vr.song; for(var ik in vr.imgs) IMG[ik]=vr.imgs[ik]; }   /* score 留在 song 上：试听按它发声 */
           catch(e){ delete pack[vk]; window.__LOADERR='谱面渲染出错：'+(e&&e.message||e); }
         }
       }
@@ -1812,6 +1812,11 @@ svg.vec text.cf-lyric.ko{fill:var(--kara,#d9480f);font-weight:700;animation:kpop
               <button class="sm cjk" id="drm" aria-pressed="false" title="鼓伴奏：按拍号走固定律动（底鼓 / 军鼓 / 踩镲）（d）">鼓伴奏</button>
               <span class="nm">鼓音量</span><span class="sub" id="volv-drum">100%</span>
               <div class="sl short"><input type="range" data-k="drum" min="0" max="150" step="5" value="100"></div>
+            </div>
+            <div class="col tg">
+              <button class="sm cjk" id="vox" aria-pressed="false" hidden title="人声：用歌声合成声库按谱唱出歌词，跟着游标走（做过人声音轨的曲目才有）（v）">人声</button>
+              <span class="nm">人声音量</span><span class="sub" id="volv-vox">100%</span>
+              <div class="sl short"><input type="range" data-k="vox" min="0" max="150" step="5" value="100"></div>
             </div>
           </div></div>
         </div>
@@ -2641,13 +2646,16 @@ let bpm=68, pos=0, playing=false, last=0, raf=0, written=-1, lock=null, cur=-1, 
 let acx=null, aT=0, aPos=0, nb=0, pend=[], armed=false;
 let SND=false;                  /* 试听：按谱发声（引擎见下文「试听」一节） */
 let DRM=false;                  /* 鼓伴奏（见下文「鼓」一节） */
+let VOX=false;                  /* 人声（离线合成的音轨，见下文「人声」一节） */
+let xBuf=null, xSrc=null, xOld=[], xBus=null, xId='', xErr='', xLoading=null, xT=0, xPos=0, xEnd=0;
 /* 音量（用户 2026-10-31：做成可调）：试听 / 鼓 / 节拍器各一个倍率，0～1.5，默认 1，记在 gs.vol */
-let VOL={snd:1,drum:1,met:1};
+let VOL={snd:1,drum:1,met:1,vox:1};
 try{ const v=JSON.parse(lsg('vol')||'null'); if(v) for(const k in VOL) if(typeof v[k]==='number') VOL[k]=Math.max(0,Math.min(1.5,v[k])); }catch(e){}
 function setVol(k,v){
   VOL[k]=Math.max(0,Math.min(1.5,v)); lss('vol',JSON.stringify(VOL));
   if(k==='snd' && sBus) sBus.gain.value=0.75*VOL.snd;
   if(k==='drum' && dBus) dBus.gain.value=0.6*VOL.drum;
+  if(k==='vox' && xBus) xBus.gain.value=VOL.vox;
   volPaint();
 }
 function volPaint(){ document.querySelectorAll('.pop input[data-k]').forEach(i=>{ const k=i.dataset.k, p=Math.round(VOL[k]*100);
@@ -2660,7 +2668,7 @@ let selNew=false;
 
 function lsg(k){ try{ return localStorage.getItem('gs.'+k); }catch(e){ return null; } }
 function lss(k,v){ try{ localStorage.setItem('gs.'+k,v); }catch(e){} }
-ribbon = lsg('ribbon')==='1'; metro = lsg('metro')==='1'; subdiv = lsg('subdiv')==='1'; SND = lsg('snd')==='1'; DRM = lsg('drum')==='1';
+ribbon = lsg('ribbon')==='1'; metro = lsg('metro')==='1'; subdiv = lsg('subdiv')==='1'; SND = lsg('snd')==='1'; DRM = lsg('drum')==='1'; VOX = lsg('vox')==='1';
 /* 排法跟着显示模式走：
    跑马灯 = 展开反复，一条带子只往前走；
    整页   = 谱面只铺一遍（和印刷谱一致），反复时游标跳回原位，能看出整首的结构。 */
@@ -2842,7 +2850,7 @@ function buildPlay(){
   PL.forEach((m,i)=>{ if(!i) return;
     const t=el('div','tk'+(LAB[i]!==LAB[i-1]?' hd':'')); t.style.left=(CUM[i]/TOT*100)+'%'; sb.appendChild(t); });
   sndBuild();
-  bpm = S.bpm||68; setBpm(bpm); setMetro(metro); setSub(subdiv); setSnd(SND); setDrm(DRM); applyMode();
+  bpm = S.bpm||68; setBpm(bpm); setMetro(metro); setSub(subdiv); setSnd(SND); setDrm(DRM); setVox(VOX); applyMode();
   fit(); seek(0); SC.sync();
 }
 
@@ -3304,7 +3312,7 @@ async function wake(on){ try{
   else if(lock){ await lock.release(); lock=null; } }catch(e){} }
 
 /* at 可指定音频时间轴上的起点，让预备拍和正式演奏接在同一条格子上 */
-function anchor(at){ if(!acx) return; aT=(at!=null?at:acx.currentTime); aPos=pos; nb=Math.ceil(pos-1e-6); sndAnchor(); drmAnchor(); }
+function anchor(at){ if(!acx) return; aT=(at!=null?at:acx.currentTime); aPos=pos; nb=Math.ceil(pos-1e-6); sndAnchor(); drmAnchor(); voxAnchor(); }
 /* lv: 2=小节头 1=主拍 0=细分 */
 function tickAt(t,lv){
   const o=acx.createOscillator(), g=acx.createGain();
@@ -3643,6 +3651,66 @@ function setDrm(on){
   $('drm').setAttribute('aria-pressed',String(DRM)); panelLights();
   if(DRM){ audio(); anchor(); } else drmHush();
 }
+/* ===== 人声：离线用歌声合成声库（DiffSinger）按谱唱好的音轨，按游标同步播放 =====
+   数据：song.json 的 files.vox = 'vox.m4a'（scripts/vox_render.py 产出），vox = {bpm, grp, shift, bank}；
+   音轨按谱面默认速度 bpm0 渲染：游标在单位 u 时音轨应在 u*spu0 处（spu0 = 60/(bpm0*GRP)）。
+   播放器变速就按 playbackRate = spu0/spu（= bpm/bpm0）跟着变，音高会随之略变，±10% 内听不出。
+   锚点沿用节拍器的 aT/aPos；选段循环由 voxSched 在段尾前 1 秒把下一遍排上，和节拍器的绕回一致。 */
+function voxInfo(){ return (S&&S.vox&&S.vox.f)?S.vox:null; }
+function voxSpu0(){ const v=voxInfo(); return (v&&v.bpm) ? 60/(v.bpm*(v.grp||GRP)) : 60/(bpm*GRP); }
+function voxBus(){ if(xBus) return xBus; xBus=acx.createGain(); xBus.gain.value=VOL.vox; xBus.connect(acx.destination); return xBus; }
+function voxLoad(){
+  const v=voxInfo(); if(!v||!acx) return Promise.resolve(false);
+  if(xBuf && xId===S.id) return Promise.resolve(true);
+  if(xLoading && xId===S.id) return xLoading;
+  xId=S.id; xBuf=null; xErr='';
+  const vm=/[?&]v=([0-9a-f]+)/.exec(location.search);
+  const url='songs/'+S.id+'/'+v.f+(vm?'?v='+vm[1]:'');
+  const id=S.id;
+  xLoading=fetch(url).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.arrayBuffer(); })
+    .then(ab=>new Promise((res,rej)=>{ let done=false; const ok=b=>{ if(!done){ done=true; res(b); } }, bad=e=>{ if(!done){ done=true; rej(e); } };
+                                       const p=acx.decodeAudioData(ab,ok,bad); if(p&&p.then) p.then(ok,bad); }))   /* 旧 Safari 只认回调 */
+    .then(b=>{ if(xId===id) xBuf=b; return true; })
+    .catch(e=>{ xErr=String(e&&e.message||e); say('人声音轨没能载入'); return false; })
+    .finally(()=>{ xLoading=null; });
+  return xLoading;
+}
+function voxKill(){
+  if(xSrc){ try{ xSrc.stop(0); }catch(e){} xSrc=null; }
+  xOld.forEach(o=>{ try{ o.stop(0); }catch(e){} }); xOld=[];
+}
+function voxStart(when, u){                 /* 在音频时刻 when 从单位 u 起播 */
+  if(!xBuf||!acx) return;
+  const spu0=voxSpu0(), spu=60/(bpm*GRP), rate=spu0/spu;
+  let off=u*spu0; const now=acx.currentTime;
+  if(when<now){ off+=(now-when)*rate; when=now; }   /* 锚点在过去（中途续播 / 刚载入）：从相应位置接上 */
+  if(off>=xBuf.duration) return;
+  const s=acx.createBufferSource(); s.buffer=xBuf; s.playbackRate.value=rate; s.connect(voxBus());
+  s.start(when, off); xSrc=s; xT=when; xPos=u; xEnd=0;
+}
+function voxAnchor(){
+  voxKill();
+  if(!VOX||!acx||!(playing||armed)) return;
+  if(!xBuf){ voxLoad().then(ok=>{ if(ok&&VOX&&(playing||armed)&&!xSrc) voxStart(aT,aPos); }); return; }
+  voxStart(aT,aPos);
+}
+function voxSched(){                        /* 选段循环：到段尾前 1 秒把下一遍排上，老的那一段恰在段尾停 */
+  if(!VOX||!acx||!xSrc||!SEL||!(playing||armed)||xEnd) return;
+  if(xPos>=SEL.b-1e-6) return;
+  const spu=60/(bpm*GRP), tb=xT+(SEL.b-xPos)*spu;
+  if(tb<=acx.currentTime+1.0){ const o=xSrc; try{ o.stop(tb); }catch(e){} xOld.push(o); xSrc=null; voxStart(tb, SEL.a);
+    if(xOld.length>4) xOld.shift(); }
+}
+function voxHush(){ voxKill(); }
+function setVox(on, user){                   /* user：是用户亲手按的（按钮 / 快捷键），不是开谱时恢复设置 */
+  on=!!on;
+  const v=voxInfo();
+  if(on && user && S && !v){ say(S.score ? '这首还没做人声音轨' : '图片谱没有人声音轨'); return; }
+  VOX=on; lss('vox',VOX?'1':'0');
+  $('vox').hidden=!v; $('vox').setAttribute('aria-pressed',String(VOX)); panelLights();
+  if(VOX && v){ audio(); voxLoad().then(()=>anchor()); } else voxHush();
+}
+
 function setSnd(on, user){                      /* user：是用户亲手按的（按钮 / 快捷键），不是开谱时恢复设置 */
   on=!!on;
   if(on && user && S && !EV.length){ say(S.score ? '这首的六线谱没读出可以弹的音' : '图片谱没有音符数据，试听只对矢量谱有效'); return; }
@@ -3687,12 +3755,12 @@ function setBpm(v){ bpm=Math.max(40,Math.min(160,Math.round(v)));
   spv.value=bpm; spv.style.setProperty('--p',((bpm-spv.min)/(spv.max-spv.min)*100)+'%'); if(S){ S.bpm=bpm; save(); } anchor(); paint(); }
 
 let schedTimer=0;
-function startSched(){ clearInterval(schedTimer); schedTimer=setInterval(()=>{ sched(); sndSched(); drmSched(); },25); }
+function startSched(){ clearInterval(schedTimer); schedTimer=setInterval(()=>{ sched(); sndSched(); drmSched(); voxSched(); },25); }
 function stopSched(){ clearInterval(schedTimer); schedTimer=0; }
 const PLAYD='M1 1.2 14 8.5 1 15.8Z', PAUSED='M1.5 1h4v15h-4ZM9.5 1h4v15h-4Z';
 function icon(){ pico.firstElementChild.setAttribute('d', playing?PAUSED:PLAYD); }
 const P={
-  go(audioAt){ last=performance.now(); playing=true; icon(); wake(true); if(metro||SND||DRM) audio();
+  go(audioAt){ last=performance.now(); playing=true; icon(); wake(true); if(metro||SND||DRM||VOX) audio();
         /* 预备拍交棒：轮询是 40ms 一次，交棒时正式第 1 拍其实已经响过一会儿了——把这段补进游标，别从一开始就慢半拍 */
         if(audioAt!=null && acx){ const late=acx.currentTime-audioAt; if(late>0 && late<0.5) pos=Math.min(TOT, pos+late*bpm*GRP/60); }
         /* armed 表示预备拍已经把格子定好、排程器也在跑了，这里不能重新对齐——
@@ -3701,7 +3769,7 @@ const P={
         armed=false;
         raf=requestAnimationFrame(frame); idle(); },
   stop(){ if(!playing && !raf) return;
-        playing=false; armed=false; cancelAnimationFrame(raf); raf=0; stopSched(); icon(); wake(false); hush(); sndHush(); drmHush();
+        playing=false; armed=false; cancelAnimationFrame(raf); raf=0; stopSched(); icon(); wake(false); hush(); sndHush(); drmHush(); voxHush();
         clearTimeout(tid); lean(false); paint(); }
 };
 function toggle(){
@@ -3720,7 +3788,7 @@ let cid=0;
    起拍前就已经进了节奏，不用现找。 */
 function countIn(){
   if(!PL.length) return;
-  clearInterval(cid); if(metro||SND||DRM) audio();
+  clearInterval(cid); if(metro||SND||DRM||VOX) audio();
   if(pos>=TOT) seek(0);
   const m=PL[at(pos).i];
   const units=(m.bars&&m.bars[0])||GRP*2;          /* 第一小节有几个单位 */
@@ -3728,7 +3796,7 @@ function countIn(){
   const mains=Math.max(1,Math.ceil(units/GRP));    /* 这一小节几个主拍 */
   count.hidden=false; count.firstElementChild.textContent=mains;
   let playAt=null;
-  if((metro||SND||DRM)&&acx){
+  if((metro||SND||DRM||VOX)&&acx){
     const t0=acx.currentTime+0.06;
     for(let u=0;u<units && (metro||DRM);u++){     /* 只开试听：不打预备拍的响，但格子照样定（下面）；开着鼓没开节拍器：用踩镲数拍 */
       const main=(u%GRP)===0;
@@ -3849,6 +3917,7 @@ $('rst').onclick =e=>{ e.stopPropagation(); P.stop(); seek(0); };
 $('met').onclick =e=>{ e.stopPropagation(); setMetro(!metro); };
 $('snd').onclick =e=>{ e.stopPropagation(); setSnd(!SND, true); };
 $('drm').onclick =e=>{ e.stopPropagation(); setDrm(!DRM); };
+$('vox').onclick =e=>{ e.stopPropagation(); setVox(!VOX, true); };
 function setSub(on){ subdiv=!!on; lss('subdiv',subdiv?'1':'0');
   $('sub').setAttribute('aria-pressed',String(subdiv)); if(!subdiv) hush();
   ballBuild(); if(PL.length) paint(); }   /* 小球跟着细分开关换跳法 */
@@ -3868,7 +3937,7 @@ simpop.onclick=e=>e.stopPropagation();
 document.querySelectorAll('.pop input[data-k]').forEach(i=>{ i.oninput=()=>setVol(i.dataset.k, +i.value/100); });
 volPaint();
 /* 面板外层按钮亮起 = 里面有开着的 */
-function panelLights(){ $('spd').setAttribute('aria-pressed',String(metro)); $('sim').setAttribute('aria-pressed',String(SND||DRM)); }
+function panelLights(){ $('spd').setAttribute('aria-pressed',String(metro)); $('sim').setAttribute('aria-pressed',String(SND||DRM||VOX)); }
 spv.oninput=()=>setBpm(+spv.value);
 /* 二级面板（节拍器 / 模拟演奏）：点面板和按钮以外的地方就关掉，关的那一下吞掉，不当「点谱面 = 播放」（用户 2026-10-31） */
 let popEat=false;
@@ -4064,6 +4133,7 @@ addEventListener('keydown',e=>{
   else if(k==='m'||k==='M'){ setMetro(!metro); }
   else if(k==='p'||k==='P'){ setSnd(!SND, true); }
   else if(k==='d'||k==='D'){ setDrm(!DRM); }
+  else if(k==='v'||k==='V'){ setVox(!VOX, true); }
   else if(k==='s'||k==='S'){ setSub(!subdiv); }
   else if(k==='r'||k==='R'){ P.stop(); seek(0); }
   else if(k==='Escape'){ if(!closePops()) selClear(); }
@@ -4079,6 +4149,7 @@ document.addEventListener('visibilitychange',()=>{ if(!document.hidden && playin
 window.__GS = {
   get song(){ return S; },
   get drum(){ return {on:DRM, hits:dHits, pend:dPend.length}; },
+  get vox(){ return {on:VOX, info:voxInfo(), loaded:!!xBuf, dur:xBuf&&xBuf.duration, src:!!xSrc, old:xOld.length, rate:xSrc&&xSrc.playbackRate.value, xT, xPos, xEnd, err:xErr, gain:xBus&&xBus.gain.value}; },
   get vol(){ return {v:VOL, snd:sBus&&sBus.gain.value, drum:dBus&&dBus.gain.value}; },
   shareUrl: () => shareUrl(),
   get snd(){ return {on:SND, n:EV.length, ev:EV, played:sPlayed, leg:sLeg, rates:sVoice.map(v=>v?+v.playbackRate.value.toFixed(4):null), bufs:Object.keys(sBuf).length, buf:sBuf, live:sAll.length, err:sndErr, acx:acx&&acx.state, ct:acx&&acx.currentTime, sT, sPos, en, armed, playing, fall:FALL.kind, fallWant:FALL.want}; },
