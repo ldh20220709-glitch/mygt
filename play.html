@@ -1633,7 +1633,8 @@ svg.vec text.cf-lyric.ko{fill:var(--kara,#d9480f);font-weight:700;animation:kpop
 #where{font-family:var(--cjk);font-size:12px;font-weight:500;color:var(--cue)}
 #spdwrap,#simwrap{position:relative;flex:0 0 auto}
 #spdpop,#simpop{width:auto;padding:10px 10px 8px}
-.pop .row{display:flex;gap:10px;align-items:flex-start}
+.pop .row{display:flex;gap:10px;align-items:stretch}   /* 两列等高：左列的音量杆撑满，底下的「音量」和右列的「慢」齐 */
+.pop .sl.grow{flex:1 1 auto;height:auto;min-height:104px}
 .pop .col{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:64px}
 .pop .col.tg{align-items:stretch;justify-content:flex-start;min-width:max-content}
 .pop .col.tg .sm{width:auto;box-sizing:border-box;white-space:nowrap;text-align:center}
@@ -1787,8 +1788,9 @@ svg.vec text.cf-lyric.ko{fill:var(--kara,#d9480f);font-weight:700;animation:kpop
             <div class="col tg">
               <button class="sm cjk" id="met" aria-pressed="false" title="节拍器开关（m）">节拍器</button>
               <button class="sm cjk" id="sub" aria-pressed="false" title="在主拍之间补一层轻响：4/4 变每拍两下，6/8 变每小节六下（s）">半拍</button>
-              <span class="nm">音量</span><span class="sub" id="volv-met">100%</span>
-              <div class="sl short"><input type="range" data-k="met" min="0" max="150" step="5" value="100"></div>
+              <span class="sub" id="volv-met">100%</span>
+              <div class="sl short grow"><input type="range" data-k="met" min="0" max="150" step="5" value="100"></div>
+              <span class="pv">音量</span>
             </div>
             <div class="col">
               <span class="hd" id="popv">68</span><span class="unit" id="popu">拍 / 分钟</span>
