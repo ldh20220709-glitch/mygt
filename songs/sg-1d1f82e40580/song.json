@@ -8242,8 +8242,8 @@
  "vox": {
   "bpm": 68,
   "grp": 3,
-  "shift": 12,
-  "bank": "Qixuan v2.7.0 (DiffSinger)",
+  "shift": 0,
+  "bank": "Qixuan v2.7.0 (DiffSinger) → Seed-VC 用户音色",
   "len": 122.0
  }
 }
